@@ -130,6 +130,8 @@ export default class {
     if (shuffle) {
       this._shuffleTheList();
     }
+    // 同步当前歌曲在列表中的下标
+    this.current = this.list.indexOf(this.currentTrackID);
   }
   get reversed() {
     return this._reversed;
@@ -307,10 +309,20 @@ export default class {
     );
     const trackDuration = ~~(track.dt / 1000);
     time = completed ? trackDuration : ~~time;
+
+    // 一次播放只上报一次：歌曲自然播完时会先走 _nextTrackCallback，
+    // 紧接着切歌又会走 _replaceCurrentTrack，两边都会调用到这里。
+    // 没有真正播放过的歌曲 (时长为 0) 也不需要上报。
+    const howler = this._howler;
+    if (howler?._scrobbled || time < 1) return;
+    if (howler) howler._scrobbled = true;
+
     scrobble({
       id: track.id,
       sourceid: this.playlistSource.id,
       time,
+    }).catch(error => {
+      console.debug('[debug][Player.js] scrobble failed', error);
     });
     if (
       store.state.lastfm.key !== undefined &&
@@ -823,6 +835,9 @@ export default class {
     this._howler?.once('play', () => {
       this._howler?.fade(0, this.volume, PLAY_PAUSE_FADE_DURATION);
 
+      // 播放时确保开启player.
+      // 避免因"忘记设置"导致在播放时播放器不显示的Bug
+      this._enabled = true;
       this._setPlaying(true);
       if (this._currentTrack.name) {
         setTitle(this._currentTrack);
@@ -879,7 +894,6 @@ export default class {
     autoPlayTrackID = 'first'
   ) {
     this._isPersonalFM = false;
-    if (!this._enabled) this._enabled = true;
     this.list = trackIDs;
     this.current = 0;
     this._playlistSource = {
@@ -890,7 +904,7 @@ export default class {
     if (autoPlayTrackID === 'first') {
       this._replaceCurrentTrack(this.list[0]);
     } else {
-      this.current = trackIDs.indexOf(autoPlayTrackID);
+      this.current = this.list.indexOf(autoPlayTrackID);
       this._replaceCurrentTrack(autoPlayTrackID);
     }
   }
@@ -941,7 +955,6 @@ export default class {
   }
   playPersonalFM() {
     this._isPersonalFM = true;
-    if (!this._enabled) this._enabled = true;
     if (this.currentTrackID !== this._personalFMTrack.id) {
       this._replaceCurrentTrack(this._personalFMTrack.id, true);
     } else {
